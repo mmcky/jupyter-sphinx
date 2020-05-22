@@ -356,7 +356,7 @@ def cell_output_to_nodes(outputs, data_priority, write_stderr, dir, thebe_config
     return to_add
 
 def cell_output_to_nodes_inline(
-    outputs, data_priority, write_stderr, dir, thebe_config
+    context, outputs, data_priority, write_stderr, dir, thebe_config
 ):
     """Convert jupyter cell outputs and filenames to doctree nodes inline.
 
@@ -380,6 +380,8 @@ def cell_output_to_nodes_inline(
     import os
     import docutils
     import nbconvert
+
+    builder, logger = context
 
     to_add = []
     for _, output in enumerate(outputs):
@@ -436,6 +438,13 @@ def cell_output_to_nodes_inline(
                 continue
             data = output["data"][mime_type]
             if mime_type.startswith("image"):
+                if builder == "latex" and "gif" in mime_type:
+                    logger.warning(
+                        "[%s] doesn't support object of mime type: %s".format(builder, mime_type)
+                    )
+                    to_add.append(
+                        docutils.nodes.SkipNode
+                    )
                 # Sphinx treats absolute paths as being rooted at the source
                 # directory, so make a relative path, which Sphinx treats
                 # as being relative to the current working directory.
