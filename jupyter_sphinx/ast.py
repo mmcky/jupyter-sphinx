@@ -355,6 +355,138 @@ def cell_output_to_nodes(outputs, data_priority, write_stderr, dir, thebe_config
 
     return to_add
 
+def cell_output_to_nodes_inline(
+    outputs, data_priority, write_stderr, dir, thebe_config
+):
+    """Convert jupyter cell outputs and filenames to doctree nodes inline.
+
+    Parameters
+    ----------
+    outputs : jupyter cell outputs
+    data_priority : list of mime types
+        Which media types to prioritize.
+    write_stderr : bool
+        If True include stderr in cell output
+    dir : string
+        Sphinx "absolute path" to the output folder, so it is a relative path
+        to the source folder prefixed with ``/``.
+    thebe_config: dict
+        Thebelab configuration object or None
+
+    Note
+    -----
+    1. This is used in [myst-nb](https://github.com/executablebooks/MyST-NB)
+    """
+    import os
+    import docutils
+    import nbconvert
+
+    to_add = []
+    for _, output in enumerate(outputs):
+        output_type = output["output_type"]
+        if output_type == "stream":
+            if output["name"] == "stderr":
+                if not write_stderr:
+                    continue
+                else:
+                    # Output a container with an unhighlighted literal block for
+                    # `stderr` messages.
+                    #
+                    # Adds a "stderr" class that can be customized by the user for both
+                    # the container and the literal_block.
+                    #
+                    # Not setting "rawsource" disables Pygment hightlighting, which
+                    # would otherwise add a <div class="highlight">.
+
+                    # container = docutils.nodes.container(classes=["stderr"])
+                    literal = docutils.nodes.literal(
+                        text=output["text"],
+                        rawsource="",  # disables Pygment highlighting
+                        language="none",
+                        classes=["stderr"],
+                    )
+
+                    to_add.append(literal)
+            else:
+
+                to_add.append(
+                    docutils.nodes.literal(
+                        text=output["text"],
+                        rawsource=output["text"],
+                        language="none",
+                        classes=["output", "stream"],
+                    )
+                )
+        elif output_type == "error":
+            traceback = "\n".join(output["traceback"])
+            text = nbconvert.filters.strip_ansi(traceback)
+            to_add.append(
+                docutils.nodes.literal(
+                    text=text,
+                    rawsource=text,
+                    language="ipythontb",
+                    classes=["output", "traceback"],
+                )
+            )
+        elif output_type in ("display_data", "execute_result"):
+            try:
+                # First mime_type by priority that occurs in output.
+                mime_type = next(x for x in data_priority if x in output["data"])
+            except StopIteration:
+                continue
+            data = output["data"][mime_type]
+            if mime_type.startswith("image"):
+                # Sphinx treats absolute paths as being rooted at the source
+                # directory, so make a relative path, which Sphinx treats
+                # as being relative to the current working directory.
+                filename = os.path.basename(output.metadata["filenames"][mime_type])
+
+                # checks if path in cell has a subpath inside of dir
+                filedir = os.path.dirname(output.metadata["filenames"][mime_type])
+                subpaths = filedir.split(dir)
+                if subpaths and len(subpaths) > 1:
+                    subpath = subpaths[1]
+                    dir += subpath
+
+                uri = os.path.join(dir, filename)
+                to_add.append(docutils.nodes.image(uri=uri))
+            elif mime_type == "text/html":
+                to_add.append(
+                    docutils.nodes.raw(
+                        text=data, format="html", classes=["output", "text_html"]
+                    )
+                )
+            elif mime_type == "text/latex":
+                to_add.append(
+                    docutils.nodes.math(
+                        text=strip_latex_delimiters(data),
+                        nowrap=False,
+                        number=None,
+                        classes=["output", "text_latex"],
+                    )
+                )
+            elif mime_type == "text/plain":
+                to_add.append(
+                    docutils.nodes.literal(
+                        text=data,
+                        rawsource=data,
+                        language="none",
+                        classes=["output", "text_plain"],
+                    )
+                )
+            elif mime_type == "application/javascript":
+                to_add.append(
+                    docutils.nodes.raw(
+                        text='<script type="{mime_type}">{data}</script>'.format(
+                            mime_type=mime_type, data=data
+                        ),
+                        format="html",
+                    )
+                )
+            elif mime_type == WIDGET_VIEW_MIMETYPE:
+                to_add.append(JupyterWidgetViewNode(view_spec=data))
+
+    return to_add
 
 def attach_outputs(output_nodes, node, thebe_config, cm_language):
     if not node.attributes["hide_code"]:  # only add css if code is displayed
